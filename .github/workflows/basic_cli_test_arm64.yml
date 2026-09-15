@@ -1,4 +1,5 @@
 on:
+#  pull_request:
   workflow_dispatch:
 
 # this cancels workflows currently in progress if you start a new one
@@ -6,12 +7,15 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Do not add permissions here! Configure them at the job level!
+permissions: {}
+
 jobs:
   test-basic-cli-release-arm64:
     runs-on: [self-hosted, Linux, ARM64]
     steps:
       - name: clone basic-cli repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           repository: roc-lang/basic-cli
           ref: main
@@ -52,8 +56,9 @@ jobs:
           git fetch --tags
           latestTag=$(git describe --tags $(git rev-list --tags --max-count=1))
           git checkout $latestTag
-
-      - name: Run all tests with latest roc nightly and latest basic-cli release
-        run: |
+          # remove things that don't work on musl
+          rm ./examples/file-accessed-modified-created-time.roc
+          sed -i.bak -e '/time_accessed!,$/d' -e '/time_modified!,$/d' -e '/time_created!,$/d' -e '/^time_accessed!/,/^$/d' -e '/^time_modified!/,/^$/d' -e '/^time_created!/,/^$/d' -e '/^import Utc exposing \[Utc\]$/d' ./platform/File.roc
+          rm ./platform/File.roc.bak
           sed -i 's/x86_64/arm64/g' ./ci/test_latest_release.sh
-          ROC=./roc_nightly/roc EXAMPLES_DIR=./basic-cli/examples/ ./ci/test_latest_release.sh
+          GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }} EXAMPLES_DIR=./examples/ ./ci/test_latest_release.sh

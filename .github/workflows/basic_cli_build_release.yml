@@ -1,5 +1,5 @@
 on:
-  #pull_request:
+#  pull_request:
   workflow_dispatch:
 
 # this cancels workflows currently in progress if you start a new one
@@ -7,17 +7,20 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Do not add permissions here! Configure them at the job level!
+permissions: {}
+
 env:
   # use .tar.gz for quick testing
   ARCHIVE_FORMAT: .tar.br
   # Make a new basic-cli git tag and set it here before starting this workflow
-  RELEASE_TAG: 0.12.0
+  RELEASE_TAG: 0.20.0
 
 jobs:
   prepare:
-    runs-on: [ubuntu-20.04]
+    runs-on: [ubuntu-24.04]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           repository: roc-lang/basic-cli
 
@@ -38,113 +41,115 @@ jobs:
       - run: curl -fOL https://github.com/roc-lang/roc/releases/download/nightly/roc_nightly-linux_arm64-latest.tar.gz
       - run: curl -fOL https://github.com/roc-lang/roc/releases/download/nightly/roc_nightly-macos_x86_64-latest.tar.gz
       - run: curl -fOL https://github.com/roc-lang/roc/releases/download/nightly/roc_nightly-macos_apple_silicon-latest.tar.gz
-      #- run: curl -fOL https://github.com/roc-lang/roc/releases/download/nightly/roc_nightly-linux_x86_64-TESTING.tar.gz
-      #- run: curl -fOL https://github.com/roc-lang/roc/releases/download/nightly/roc_nightly-linux_arm64-TESTING.tar.gz
-      #- run: curl -fOL https://github.com/roc-lang/roc/releases/download/nightly/roc_nightly-macos_x86_64-TESTING.tar.gz
-      #- run: curl -fOL https://github.com/roc-lang/roc/releases/download/nightly/roc_nightly-macos_apple_silicon-TESTING.tar.gz
 
       - name: Save roc_nightly archives
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
-          path:  roc_nightly-*
+          path: roc_nightly-*
 
   build-linux-x86_64-files:
-    runs-on: [ubuntu-20.04]
+    runs-on: [ubuntu-24.04]
     needs: [prepare]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
       - name: Download the previously uploaded roc_nightly archives
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8.0.1
 
       - name: build basic-cli with surgical linker and also with legacy linker
         env:
           CARGO_BUILD_TARGET: x86_64-unknown-linux-musl
-        run: ./ci/build_basic_cli.sh linux_x86_64 "--linker legacy"
+        run: ./ci/build_basic_cli.sh linux_x86_64
 
-      - name: Save .rh, .rm and .o file
-        uses: actions/upload-artifact@v4
+      - name: Save .rh, .rm and .a file
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: linux-x86_64-files
           path: |
             basic-cli/platform/metadata_linux-x64.rm
             basic-cli/platform/linux-x64.rh
-            basic-cli/platform/linux-x64.o
-
+            basic-cli/platform/linux-x64.a
 
   build-linux-arm64-files:
     runs-on: [self-hosted, Linux, ARM64]
     needs: [prepare]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
       - name: Download the previously uploaded roc_nightly archives
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8.0.1
 
       - name: build basic-cli
         env:
           CARGO_BUILD_TARGET: aarch64-unknown-linux-musl
-          CC_aarch64_unknown_linux_musl: clang-16
-          AR_aarch64_unknown_linux_musl: llvm-ar-16
+          CC_aarch64_unknown_linux_musl: clang-18
+          AR_aarch64_unknown_linux_musl: llvm-ar-18
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS: "-Clink-self-contained=yes -Clinker=rust-lld"
+          CFLAGS_aarch64_unknown_linux_musl: "-nostdinc -nostdlib -isystem/usr/include/aarch64-linux-musl/"
         run: ./ci/build_basic_cli.sh linux_arm64
 
-      - name: Save .o file
-        uses: actions/upload-artifact@v4
+      - name: Save .a file
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: linux-arm64-files
           path: |
-            basic-cli/platform/linux-arm64.o
+            basic-cli/platform/linux-arm64.a
 
   build-macos-x86_64-files:
-    runs-on: [macos-12] # I expect the generated files to work on macOS 12 and up
+    runs-on: [macos-15-intel] # should work on macOS 15+
     needs: [prepare]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
       - name: Download the previously uploaded roc_nightly archives
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8.0.1
 
       - run: ./ci/build_basic_cli.sh macos_x86_64
 
-      - name: Save .o files
-        uses: actions/upload-artifact@v4
+      - name: Save .a file
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: macos-x86_64-files
           path: |
-            basic-cli/platform/macos-x64.o
+            basic-cli/platform/macos-x64.a
 
   build-macos-apple-silicon-files:
-    name: build apple silicon .o file
+    name: build apple silicon .a file
     runs-on: [self-hosted, macOS, ARM64]
     needs: [prepare]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
       - name: Download the previously uploaded roc_nightly archives
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8.0.1
 
       - run: ./ci/build_basic_cli.sh macos_apple_silicon
 
-      - name: Save macos-arm64.o file
-        uses: actions/upload-artifact@v4
+      - name: Save macos-arm64.a file
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: macos-apple-silicon-files
           path: |
-            basic-cli/platform/macos-arm64.o
+            basic-cli/platform/macos-arm64.a
 
   create-release-archive:
-    needs: [build-linux-x86_64-files, build-linux-arm64-files, build-macos-x86_64-files, build-macos-apple-silicon-files]
+    needs:
+      [
+        build-linux-x86_64-files,
+        build-linux-arm64-files,
+        build-macos-x86_64-files,
+        build-macos-apple-silicon-files,
+      ]
     name: create release archive
-    runs-on: [ubuntu-20.04]
+    runs-on: [ubuntu-24.04]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
       - name: remove all folders except the ci folder
         run: ls | grep -v  ci | xargs rm -rf
 
       - name: Download the previously uploaded files
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8.0.1
 
       - name: mv roc nightly and simplify name
         run: mv $(ls -d artifact/* | grep "roc_nightly.*tar\.gz" | grep "linux_x86_64") ./roc_nightly.tar.gz
@@ -177,7 +182,7 @@ jobs:
 
       - name: build basic-cli docs
         env:
-          ROC_DOCS_URL_ROOT: /packages/basic-cli/${{ env.RELEASE_TAG }}
+          ROC_DOCS_URL_ROOT: /basic-cli/${{ env.RELEASE_TAG }}
         run: |
           ./roc_nightly/roc docs ./basic-cli/platform/main.roc
           tar -czvf docs.tar.gz generated-docs/
@@ -185,29 +190,44 @@ jobs:
       - run: echo "TAR_FILENAME=$(ls -d basic-cli/platform/* | grep ${{ env.ARCHIVE_FORMAT }})" >> $GITHUB_ENV
 
       - name: Upload platform archive
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: basic-cli-platform
           path: |
             ${{ env.TAR_FILENAME }}
 
       - name: Upload docs archive
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: release-assets-docs
           path: |
             docs.tar.gz
 
-  test-release-ubuntu:
+  test-release:
     needs: [create-release-archive]
-    runs-on: [ubuntu-20.04]
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04, ubuntu-24.04-arm, macos-15-intel, macos-14, macos-15]
+    runs-on: ${{ matrix.os }}
     steps:
-
       - name: Download the previously uploaded files
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8.0.1
+
+      - name: Set OS-specific variables
+        id: vars
+        run: |
+          if [[ "${{ matrix.os }}" =~ ^ubuntu-.*-arm$ ]]; then
+            echo "os_pattern=linux_arm64" >> $GITHUB_OUTPUT
+          elif [[ "${{ matrix.os }}" =~ ^ubuntu- ]]; then
+            echo "os_pattern=linux_x86_64" >> $GITHUB_OUTPUT
+          elif [ "${{ matrix.os }}" = "macos-15-intel" ]; then
+            echo "os_pattern=macos_x86_64" >> $GITHUB_OUTPUT
+          else
+            echo "os_pattern=macos_apple_silicon" >> $GITHUB_OUTPUT
+          fi
 
       - name: mv roc nightly and simplify name
-        run: mv $(ls -d artifact/* | grep "roc_nightly.*tar\.gz" | grep "linux_x86_64") ./roc_nightly.tar.gz
+        run: mv $(ls -d artifact/* | grep "roc_nightly.*tar\.gz" | grep "${{ steps.vars.outputs.os_pattern }}") ./roc_nightly.tar.gz
 
       - name: decompress the tar
         run: tar -xzvf roc_nightly.tar.gz
@@ -227,11 +247,17 @@ jobs:
           cd basic-cli-platform && ls | grep "tar" | xargs brotli -d
           ls | grep "tar$" | xargs tar -xf
 
-      - name: Install expect for tests if we dont have it yet
-        run: if ! dpkg -l | grep -qw expect; then sudo apt install -y expect; fi
+      - name: Install dependencies (Ubuntu)
+        if: startsWith(matrix.os, 'ubuntu-')
+        run: |
+          sudo apt install -y expect ncat ripgrep
 
-      - name: Install ncat for tests if we dont have it yet
-        run: if ! dpkg -l | grep -qw ncat; then sudo apt install -y ncat; fi
+      - name: Install dependencies (macOS)
+        if: startsWith(matrix.os, 'macos-')
+        run: |
+          brew install expect
+          brew install nmap  # includes ncat
+          brew install ripgrep
 
       - name: prepare testing
         run: |
@@ -249,11 +275,21 @@ jobs:
           cd basic-cli
           git checkout ${{ env.RELEASE_TAG }}
           cp -r examples ../..
+          cp -r tests ../..
           cp -r ci ../..
-          cp -r LICENSE ../..
+          cp -r Cargo.toml ../..
           # LICENSE is necessary for command test
+          cp -r LICENSE ../..
+
+      - name: Remove things that dont work on musl
+        if: startsWith(matrix.os, 'ubuntu-')
+        run: |
+          rm basic-cli-platform/examples/file-accessed-modified-created-time.roc
+          sed -i.bak -e '/time_accessed!,$/d' -e '/time_modified!,$/d' -e '/time_created!,$/d' -e '/^time_accessed!/,/^$/d' -e '/^time_modified!/,/^$/d' -e '/^time_created!/,/^$/d' -e '/^import Utc exposing \[Utc\]$/d' basic-cli-platform/platform/File.roc
+          rm basic-cli-platform/platform/File.roc.bak
 
       - name: run tests
         run: |
+          # no need to build platform anymore
           cd basic-cli-platform
-          ROC=./roc_nightly/roc EXAMPLES_DIR=./examples/ ROC_BUILD_FLAGS=--prebuilt-platform ./ci/all_tests.sh
+          NO_BUILD=1 ROC=./roc_nightly/roc EXAMPLES_DIR=./examples/ ./ci/all_tests.sh

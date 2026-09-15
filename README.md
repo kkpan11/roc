@@ -3,13 +3,13 @@
 [Roc](https://www.roc-lang.org) is not ready for a 0.1 release yet, but we do have:
 
 - [**installation** guide](https://www.roc-lang.org/install)
-- [**tutorial**](https://roc-lang.org/tutorial)
-- [**docs** for the standard library](https://www.roc-lang.org/builtins)
-- [**examples**](https://www.roc-lang.org/examples)
-- [**faq**: frequently asked questions](https://github.com/roc-lang/roc/blob/main/www/content/faq.md)
+- [**tutorial**](docs/mini-tutorial-new-compiler.md)
+- [**docs** for the standard library](https://roc-lang.org/docs/main/)
+- [**examples**](test/echo/all_syntax_test.roc)
+- [**faq**: frequently asked questions](https://www.roc-lang.org/faq)
 - [**group chat**](https://roc.zulipchat.com) for help, questions and discussions
 
-If you'd like to contribute, [get started here](CONTRIBUTING.md). Don't hesitate to ask for help on our [group chat](https://roc.zulipchat.com), we're friendly!
+If you'd like to contribute, [get started here](CONTRIBUTING/README.md). Don't hesitate to ask for help on our [group chat](https://roc.zulipchat.com), we're friendly!
 
 ## Sponsors
 
@@ -19,13 +19,9 @@ You can 💜 **sponsor** 💜 Roc on:
 - [GitHub](https://github.com/sponsors/roc-lang)
 - [Liberapay](https://liberapay.com/roc_lang)
 
-We are very grateful for our corporate sponsors [Vendr](https://www.vendr.com/), [RWX](https://www.rwx.com), [Tweede golf](https://tweedegolf.nl/en), [ohne-makler](https://www.ohne-makler.net), and [Decem](https://www.decem.com.au):
+We are very grateful for our corporate sponsors [Lambda Class](https://lambdaclass.com), [ohne-makler](https://www.ohne-makler.net), and [Decem](https://www.decem.com.au):
 
-[<img src="https://user-images.githubusercontent.com/1094080/223597445-81755626-a080-4299-a38c-3c92e7548489.png" height="60" alt="Vendr logo"/>](https://www.vendr.com)
-&nbsp;&nbsp;&nbsp;&nbsp;
-[<img src="https://github.com/roc-lang/roc/assets/1094080/82c0868e-d23f-42a0-ac2d-c6e6b2e16575" height="60" alt="RWX logo"/>](https://www.rwx.com)
-&nbsp;&nbsp;&nbsp;&nbsp;
-[<img src="https://user-images.githubusercontent.com/1094080/183123052-856815b1-8cc9-410a-83b0-589f03613188.svg" height="60" alt="tweede golf logo"/>](https://tweedegolf.nl/en)
+[<img src="https://github.com/user-attachments/assets/3241c389-8f04-4b45-9dbb-b94a6f7cb85e" height="60" alt="Lambda Class logo"/>](https://lambdaclass.com)
 &nbsp;&nbsp;&nbsp;&nbsp;
 [<img src="https://www.ohne-makler.net/static/img/brand/logo.svg" height="60" alt="ohne-makler logo"/>](https://www.ohne-makler.net)
 &nbsp;&nbsp;&nbsp;&nbsp;
@@ -35,12 +31,12 @@ If you would like your company to become a corporate sponsor of Roc's developmen
 
 We'd also like to express our gratitude to our generous [individual sponsors](https://github.com/sponsors/roc-lang/)! A special thanks to those sponsoring $25/month or more:
 
+- [Peter Marreck](https://github.com/pmarreck)
 - [Barry Moore](https://github.com/chiroptical)
 - Eric Andresen
 - [Jackson Lucky](https://github.com/jluckyiv)
 - [Agus Zubiaga](https://github.com/agu-z)
 - [Angelo Ceccato](https://github.com/AngeloChecked)
-- [Niclas Overby](https://github.com/noverby)
 - [Krzysztof G.](https://github.com/krzysztofgb)
 - [Sam Mohr](https://github.com/smores56)
 - [Steven Chen](https://github.com/megakilo)
@@ -58,5 +54,6 @@ We'd also like to express our gratitude to our generous [individual sponsors](ht
 - [Shritesh Bhattarai](https://github.com/shritesh)
 - [Richard Feldman](https://github.com/rtfeldman)
 - [Ayaz Hafiz](https://github.com/ayazhafiz)
+- [Anthony Bullard](https://github.com/gamebox)
 
 Thank you all so much for helping Roc progress!

@@ -1,0 +1,82 @@
+# META
+~~~ini
+description=String interpolation and concatenation
+type=dev_object
+~~~
+# SOURCE
+## app.roc
+~~~roc
+app [main] { pf: platform "./platform.roc" }
+
+greeting = "Hello"
+name = "World"
+main = "${greeting}, ${name}!"
+~~~
+## platform.roc
+~~~roc
+platform ""
+    requires {} { main : Str }
+    exposes []
+    packages {}
+    provides { "roc_main": main_for_host }
+    targets: {
+        inputs_dir: "targets/",
+        x64glibc: { inputs: [app] },
+    }
+
+main_for_host : Str
+main_for_host = main
+~~~
+# MONO
+~~~roc
+# platform
+main_for_host = <required>
+
+# app
+greeting = "Hello"
+name = "World"
+main = {
+	cinterp_0 = greeting
+	cinterp_1 = name
+	<interpolation>("", [cinterp_0, ", ", cinterp_1, "!"])
+}
+
+~~~
+# DEV OUTPUT
+~~~ini
+x64mac=dce370bccb24989d1aec5f219b868f2dd9fcd85b40087c4f0fd7767d17f10dc7
+x64win=60a9818589befa148f2b50b21ee13154c00abe3afab4036a8c02695da47ec896
+x64mingw=60a9818589befa148f2b50b21ee13154c00abe3afab4036a8c02695da47ec896
+x64freebsd=862d7543b6cf6234000c5aed03ca37d1bdc14bc89266ae778bf19ca9e4a54f0b
+x64openbsd=7ea5b3853dc56c7ef7f1a0f925c02a8a2a02c7ac911978a7138c72a255977ceb
+x64netbsd=d4b72eebf5621609de10dbf0fe40a74cafa07514e8b9b36bc28bad0db37812ca
+x64musl=d4b72eebf5621609de10dbf0fe40a74cafa07514e8b9b36bc28bad0db37812ca
+x64glibc=d4b72eebf5621609de10dbf0fe40a74cafa07514e8b9b36bc28bad0db37812ca
+x64linux=d4b72eebf5621609de10dbf0fe40a74cafa07514e8b9b36bc28bad0db37812ca
+x64elf=d4b72eebf5621609de10dbf0fe40a74cafa07514e8b9b36bc28bad0db37812ca
+x64v1mac=dce370bccb24989d1aec5f219b868f2dd9fcd85b40087c4f0fd7767d17f10dc7
+x64v1win=60a9818589befa148f2b50b21ee13154c00abe3afab4036a8c02695da47ec896
+x64v1mingw=60a9818589befa148f2b50b21ee13154c00abe3afab4036a8c02695da47ec896
+x64v1freebsd=862d7543b6cf6234000c5aed03ca37d1bdc14bc89266ae778bf19ca9e4a54f0b
+x64v1openbsd=7ea5b3853dc56c7ef7f1a0f925c02a8a2a02c7ac911978a7138c72a255977ceb
+x64v1netbsd=d4b72eebf5621609de10dbf0fe40a74cafa07514e8b9b36bc28bad0db37812ca
+x64v1musl=d4b72eebf5621609de10dbf0fe40a74cafa07514e8b9b36bc28bad0db37812ca
+x64v1glibc=d4b72eebf5621609de10dbf0fe40a74cafa07514e8b9b36bc28bad0db37812ca
+x64v1linux=d4b72eebf5621609de10dbf0fe40a74cafa07514e8b9b36bc28bad0db37812ca
+x64v1elf=d4b72eebf5621609de10dbf0fe40a74cafa07514e8b9b36bc28bad0db37812ca
+arm64mac=205dce49bcf385d4c3f19a37b988ad084d7ea0f4374f3bc6c078734dc7e58199
+arm64win=ead009e22323ee755e6f25683a99c10c0f68764d2c3eb257658f076c62d91144
+arm64mingw=ead009e22323ee755e6f25683a99c10c0f68764d2c3eb257658f076c62d91144
+arm64linux=25100157f60faa17756e23051c334f6664715f3a6bf8274daedfbdee680d8729
+arm64musl=25100157f60faa17756e23051c334f6664715f3a6bf8274daedfbdee680d8729
+arm64glibc=25100157f60faa17756e23051c334f6664715f3a6bf8274daedfbdee680d8729
+arm64v1win=ead009e22323ee755e6f25683a99c10c0f68764d2c3eb257658f076c62d91144
+arm64v1mingw=ead009e22323ee755e6f25683a99c10c0f68764d2c3eb257658f076c62d91144
+arm64v1linux=25100157f60faa17756e23051c334f6664715f3a6bf8274daedfbdee680d8729
+arm64v1musl=25100157f60faa17756e23051c334f6664715f3a6bf8274daedfbdee680d8729
+arm64v1glibc=25100157f60faa17756e23051c334f6664715f3a6bf8274daedfbdee680d8729
+arm32linux=NOT_IMPLEMENTED
+arm32musl=NOT_IMPLEMENTED
+wasm32=NOT_IMPLEMENTED
+wasm32v1=NOT_IMPLEMENTED
+~~~

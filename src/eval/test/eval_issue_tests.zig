@@ -1,0 +1,1966 @@
+//! Focused regression repros for GitHub issues.
+
+const TestCase = @import("parallel_runner.zig").TestCase;
+
+const issue806RightmostField = "value.b.b.b.b.b.b.b.b.b.b.b.b";
+
+const issue806LargeAggregateSource =
+    \\R1 : { a : U64, b : U64 }
+    \\R2 : { a : R1, b : R1 }
+    \\R3 : { a : R2, b : R2 }
+    \\R4 : { a : R3, b : R3 }
+    \\R5 : { a : R4, b : R4 }
+    \\R6 : { a : R5, b : R5 }
+    \\R7 : { a : R6, b : R6 }
+    \\R8 : { a : R7, b : R7 }
+    \\R9 : { a : R8, b : R8 }
+    \\R10 : { a : R9, b : R9 }
+    \\R11 : { a : R10, b : R10 }
+    \\R12 : { a : R11, b : R11 }
+    \\
+    \\Wrapped := [Payload(R12)]
+    \\
+    \\make1 : U64 -> R1
+    \\make1 = |n| { a: n, b: n + 1 }
+    \\
+    \\make2 : U64 -> R2
+    \\make2 = |n| { a: make1(n), b: make1(n + 2) }
+    \\
+    \\make3 : U64 -> R3
+    \\make3 = |n| { a: make2(n), b: make2(n + 4) }
+    \\
+    \\make4 : U64 -> R4
+    \\make4 = |n| { a: make3(n), b: make3(n + 8) }
+    \\
+    \\make5 : U64 -> R5
+    \\make5 = |n| { a: make4(n), b: make4(n + 16) }
+    \\
+    \\make6 : U64 -> R6
+    \\make6 = |n| { a: make5(n), b: make5(n + 32) }
+    \\
+    \\make7 : U64 -> R7
+    \\make7 = |n| { a: make6(n), b: make6(n + 64) }
+    \\
+    \\make8 : U64 -> R8
+    \\make8 = |n| { a: make7(n), b: make7(n + 128) }
+    \\
+    \\make9 : U64 -> R9
+    \\make9 = |n| { a: make8(n), b: make8(n + 256) }
+    \\
+    \\make10 : U64 -> R10
+    \\make10 = |n| { a: make9(n), b: make9(n + 512) }
+    \\
+    \\make11 : U64 -> R11
+    \\make11 = |n| { a: make10(n), b: make10(n + 1024) }
+    \\
+    \\make12 : U64 -> R12
+    \\make12 = |n| { a: make11(n), b: make11(n + 2048) }
+    \\
+    \\wrap : U64 -> Wrapped
+    \\wrap = |n| Payload(make12(n))
+    \\
+    \\main = match wrap(1) {
+++ "    Payload(value) => " ++ issue806RightmostField ++ "\n" ++
+    \\}
+;
+
+// https://github.com/roc-lang/roc/issues/9658
+// A scanner loop carrying several refcounted mutable Str states whose alias
+// groups merge and re-split across iterations. The distinct
+// (alias-partition x balance) entry summaries at the loop join grow like
+// the Bell number of the state count, which overflowed the ARC borrow
+// certifier's old per-summary enumeration budget and left the procedure
+// unverified; the lattice-join fixpoint must certify it outright (debug
+// builds run the certifier on every backend compile in this suite).
+const issue9658ScannerSource =
+    \\scan : Str -> Str
+    \\scan = |raw| {
+    \\    var $remaining = Str.trim_start(raw)
+    \\    var $keys = ""
+    \\    var $vals = ""
+    \\    var $last_key = ""
+    \\    var $pending = ""
+    \\    var $keep = True
+    \\    var $valid = True
+    \\
+    \\    while $keep {
+    \\        if Str.starts_with($remaining, ";") {
+    \\            $remaining = Str.drop_prefix($remaining, ";")
+    \\            $keep = False
+    \\        } else if Str.starts_with($remaining, "k") {
+    \\            $pending = Str.concat($last_key, "k")
+    \\            $last_key = $pending
+    \\            $keys = Str.concat($keys, "k")
+    \\            $remaining = Str.drop_prefix($remaining, "k")
+    \\        } else if Str.starts_with($remaining, "v") {
+    \\            $vals = Str.concat($vals, $last_key)
+    \\            $pending = $vals
+    \\            $remaining = Str.drop_prefix($remaining, "v")
+    \\        } else if Str.starts_with($remaining, ",") {
+    \\            $last_key = $pending
+    \\            $remaining = Str.drop_prefix($remaining, ",")
+    \\        } else {
+    \\            $valid = False
+    \\            $keep = False
+    \\        }
+    \\    }
+    \\
+    \\    if $valid Str.concat($keys, $vals) else "invalid"
+    \\}
+    \\
+    \\main = scan("kkv,kv;")
+;
+
+// https://github.com/roc-lang/roc/issues/10703
+// A `var` initialized as a bare alias of another in-scope variable
+// (`var $line_start = cluster_start`) must not hijack the initializer's
+// binder: SpecConstr's loop-state specialization used to install the
+// loop-carried slot value under `cluster_start`'s binder, so every read of
+// `cluster_start` inside the loop tracked `$line_start` instead. Correct runs
+// sum 1 + line_start per line (40 + 780 = 820 for count 40); the corrupted
+// lowering zeroed the `start - prefix_start` term and returned 40.
+const issue10703LineLayoutSource =
+    \\{
+    \\    list_at = |items, index| match List.get(items, index) {
+    \\        Err(OutOfBounds) => crash "validated index escaped"
+    \\        Ok(value) => value
+    \\    }
+    \\
+    \\    range_end = |range| range.start + range.length
+    \\
+    \\    append_line = |total, clusters, prefix_start, start, end| {
+    \\        first = list_at(clusters, start)
+    \\        last = list_at(clusters, end - 1)
+    \\        scalar_count = range_end(last.scalars) - first.scalars.start
+    \\        total + scalar_count + (start - prefix_start)
+    \\    }
+    \\
+    \\    build_range = |clusters, boundaries, cluster_start, cluster_end| {
+    \\        var $line_start = cluster_start
+    \\        var $candidate = cluster_start + 1
+    \\        var $total = 0.U64
+    \\        while $line_start < cluster_end {
+    \\            boundary = list_at(boundaries, $candidate)
+    \\            if boundary == 1 {
+    \\                $total = append_line($total, clusters, cluster_start, $line_start, $candidate)
+    \\                $line_start = $candidate
+    \\                $candidate = $line_start + 1
+    \\            } else {
+    \\                $candidate = $candidate + 1
+    \\            }
+    \\        }
+    \\        $total
+    \\    }
+    \\
+    \\    make_clusters = |count| {
+    \\        var $clusters = []
+    \\        var $index = 0.U64
+    \\        while $index < count {
+    \\            $clusters = $clusters.append({ scalars: { length: 1.U64, start: $index } })
+    \\            $index = $index + 1
+    \\        }
+    \\        $clusters
+    \\    }
+    \\
+    \\    make_boundaries = |count| {
+    \\        var $boundaries = []
+    \\        var $index = 0.U64
+    \\        while $index <= count {
+    \\            $boundaries = $boundaries.append(1.U64)
+    \\            $index = $index + 1
+    \\        }
+    \\        $boundaries
+    \\    }
+    \\
+    \\    Str.inspect(build_range(make_clusters(40), make_boundaries(40), 0.U64, 40))
+    \\}
+;
+
+// The dual-alias variant of issue 10703: two loop variables initialized from
+// the same in-scope variable (`base`). Both slots used to claim `base`'s
+// binder and one arbitrarily won, so reads of `base` inside the loop tracked
+// that slot's carried value. Correct runs add base (3) on each of the 6
+// iterations and then the final `$mark` (8): 26; the corrupted lowering
+// tracked `$i` and returned 3+4+5+6+7+8 plus 8 = 41.
+const issue10703DualAliasSource =
+    \\{
+    \\    walk = |base, limit| {
+    \\        var $i = base
+    \\        var $mark = base
+    \\        var $total = 0.U64
+    \\        while $i < limit {
+    \\            $total = $total + base
+    \\            $mark = $i
+    \\            $i = $i + 1
+    \\        }
+    \\        $total + $mark
+    \\    }
+    \\
+    \\    Str.inspect(walk(3.U64, 9))
+    \\}
+;
+
+/// Public value `tests`.
+pub const tests = [_]TestCase{
+    .{
+        .name = "issue 11376: packed record constants preserve field order and mixed widths",
+        .source_kind = .module,
+        .source =
+        \\xs = List.repeat({ a: 3.U8, b: 287454020.U32, c: (-7.I16, 2.5.F32) }, 2)
+        \\main = xs
+        ,
+        .expected = .{ .inspect_str = "[{ a: 3, b: 287454020, c: (-7, 2.5) }, { a: 3, b: 287454020, c: (-7, 2.5) }]" },
+    },
+    .{
+        .name = "issue 11376: packed nominal constants preserve copy-on-write sharing",
+        .source_kind = .module,
+        .source =
+        \\Pair := { a: U8, z: U64 }
+        \\xs = List.repeat(Pair.{ a: 3, z: 42 }, 2)
+        \\ys = xs.set(0, Pair.{ a: 9, z: 77 }) ?? []
+        \\main = (xs.map(|p| (p.a, p.z)), ys.map(|p| (p.a, p.z)))
+        ,
+        .expected = .{ .inspect_str = "([(3, 42), (3, 42)], [(9, 77), (3, 42)])" },
+    },
+    .{
+        .name = "issue 11376: packed empty and zero-sized product lists retain item counts",
+        .source_kind = .module,
+        .source =
+        \\empty = List.repeat({ a: 3.U8, b: 9.U64 }, 0)
+        \\units = List.repeat({ a: {}, b: ({}, {}) }, 7)
+        \\main = (empty.len(), units.len(), units.get(6))
+        ,
+        .expected = .{ .inspect_str = "(0, 7, Ok({ a: {}, b: ({}, {}) }))" },
+    },
+    .{
+        .name = "issue 11376: packed nominal products omit declared padding",
+        .source_kind = .module,
+        .source =
+        \\Padded := { z : U16, _ : Str, a : U8, b : U32 }
+        \\xs = List.repeat(Padded.{ z: 513, a: 7, b: 287454020 }, 2)
+        \\main = xs.map(|x| (x.a, x.b, x.z))
+        ,
+        .expected = .{ .inspect_str = "[(7, 287454020, 513), (7, 287454020, 513)]" },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/11317
+        // Each alternative supplies the arm's captured local.
+        .name = "issue 11317: closure captures an or-pattern binding",
+        .source_kind = .module,
+        .source =
+        \\get : [A(U64), B(U64)] -> U64
+        \\get = |v| match v {
+        \\    A(n) | B(n) => (|| n)()
+        \\}
+        \\main = (get(A(1)), get(B(2)))
+        ,
+        .expected = .{ .inspect_str = "(1, 2)" },
+    },
+    .{
+        .name = "issue 11317: or-pattern capture in a mapped string interpolation",
+        .source_kind = .module,
+        .source =
+        \\describe : [A(U64), B(U64)] -> Str
+        \\describe = |v| match v {
+        \\    A(n) | B(n) => ["x", "y"].map(|s| "${n.to_str()}${s}") |> Str.join_with(",")
+        \\}
+        \\main = (describe(A(1)), describe(B(2)))
+        ,
+        .expected = .{ .inspect_str = "(\"1x,1y\", \"2x,2y\")" },
+    },
+    .{
+        .name = "issue 11317: or-pattern capture when the representative alternative is uninhabited",
+        .source_kind = .module,
+        .source =
+        \\get : [A([], U64), B(U64)] -> U64
+        \\get = |v| match v {
+        \\    A(_, n) | B(n) => (|| n)()
+        \\}
+        \\main = get(B(2))
+        ,
+        .expected = .{ .inspect_str = "2" },
+    },
+    .{
+        .name = "issue 11317: returned closure preserves reordered or-pattern captures",
+        .source_kind = .module,
+        .source =
+        \\make : [A(U64, U64), B(U64, U64)] -> ({} -> (U64, U64))
+        \\make = |v| match v {
+        \\    A(x, y) | B(y, x) => |{}| (x, y)
+        \\}
+        \\main = (make(A(1, 2))({}), make(B(3, 4))({}))
+        ,
+        .expected = .{ .inspect_str = "((1, 2), (4, 3))" },
+    },
+    .{
+        .name = "issue 11317: stored nested or-pattern closures retain separate generic captures",
+        .source_kind = .module,
+        .source =
+        \\make = |v| match v {
+        \\    A(n) | B(n) => |{}| {
+        \\        inner = |{}| n
+        \\        inner({})
+        \\    }
+        \\}
+        \\first = make(A("first"))
+        \\second = make(B("second"))
+        \\third = make(B(["third"]))
+        \\main = (first({}), second({}), third({}))
+        ,
+        .expected = .{ .inspect_str = "(\"first\", \"second\", [\"third\"])" },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/11316
+        .name = "issue 11316: compile-time loop preserves checked set with the same list as fallback",
+        .source_kind = .module,
+        .source =
+        \\build : List(U64) -> List(U64)
+        \\build = |steps| {
+        \\    var $acc = []
+        \\    for n in steps {
+        \\        $acc = $acc.append(n)
+        \\        $acc = $acc.set(0, n) ?? $acc
+        \\    }
+        \\    $acc
+        \\}
+        \\
+        \\program : List(U64)
+        \\program = build([1, 2, 3])
+        \\main = program
+        ,
+        .expected = .{ .inspect_str = "[3, 2, 3]" },
+    },
+    .{
+        .name = "issue 11316: compile-time checked set inside a match preserves appended elements",
+        .source_kind = .module,
+        .source =
+        \\Step := [Push(U64), Mark]
+        \\build : List(Step), List(U64) -> List(U64)
+        \\build = |steps, acc0| {
+        \\    var $acc = acc0
+        \\    for s in steps {
+        \\        $acc = match s {
+        \\            Push(n) => $acc.append(n)
+        \\            Mark => {
+        \\                w = $acc.append(0).append(7).append(8)
+        \\                w.set(0, w.len()) ?? w
+        \\            }
+        \\        }
+        \\    }
+        \\    $acc
+        \\}
+        \\program : List(U64)
+        \\program = build([Mark, Push(1), Mark, Push(2)], [])
+        \\main = program
+        ,
+        .expected = .{ .inspect_str = "[7, 7, 8, 1, 0, 7, 8, 2]" },
+    },
+    .{
+        .name = "issue 11316: checked set merges success and fallback across loop iterations",
+        .source_kind = .module,
+        .source =
+        \\build : List(U64) -> List(U64)
+        \\build = |steps| {
+        \\    var $acc = []
+        \\    for n in steps {
+        \\        $acc = $acc.append(n)
+        \\        index = if n == 2 99 else 0
+        \\        $acc = $acc.set(index, n) ?? $acc
+        \\    }
+        \\    $acc
+        \\}
+        \\main = build([1, 2, 3])
+        ,
+        .expected = .{ .inspect_str = "[3, 2, 3]" },
+    },
+    .{
+        .name = "issue 11316: loop entry preserves a retained list with spare capacity",
+        .source =
+        \\{
+        \\    build = |steps, initial| {
+        \\        var $acc = initial
+        \\        for n in steps {
+        \\            $acc = $acc.append(n)
+        \\        }
+        \\        $acc
+        \\    }
+        \\    initial = List.reserve([41.U64], 64)
+        \\    result = build([1, 2, 3], initial)
+        \\    (initial, result)
+        \\}
+        ,
+        .expected = .{ .inspect_str = "([41], [41, 1, 2, 3])" },
+    },
+    .{
+        .name = "issue 11316: mixed carrier definitions preserve a retained list and a slice",
+        .source =
+        \\{
+        \\    build = |steps, other| {
+        \\        var $acc = []
+        \\        for n in steps {
+        \\            $acc = if n == 1 other else $acc.append(n)
+        \\        }
+        \\        $acc
+        \\    }
+        \\    other = List.reserve([41.U64], 64)
+        \\    full = List.reserve([40.U64, 41, 42], 64)
+        \\    slice = full.sublist({ start: 1, len: 1 })
+        \\    from_other = build([1, 2, 3], other)
+        \\    from_slice = build([1, 2, 3], slice)
+        \\    (other, full, slice, from_other, from_slice)
+        \\}
+        ,
+        .expected = .{ .inspect_str = "([41], [40, 41, 42], [41], [41, 2, 3], [41, 2, 3])" },
+    },
+    .{
+        .name = "issue 11235: shared error tails preserve disjoint payloads and the success path",
+        .source_kind = .module,
+        .source =
+        \\f : Try({}, [..a]) -> Try({}, [A(Str), ..a])
+        \\f = |x| {
+        \\    x?
+        \\    Err(A("new"))
+        \\}
+        \\main = List.map([Err(B("a disjoint payload longer than the inline string capacity")), Ok({})], f)
+        ,
+        .expected = .{ .inspect_str = "[Err(B(\"a disjoint payload longer than the inline string capacity\")), Err(A(\"new\"))]" },
+    },
+    .{
+        .name = "issue 11235: normalized overlapping error tags retain their runtime payload",
+        .source_kind = .module,
+        .source =
+        \\f : Try({}, [..a]) -> Try({}, [A(Str), ..a])
+        \\f = |x| {
+        \\    x?
+        \\    Err(A("new"))
+        \\}
+        \\main = match f(Err(A("an overlapping payload longer than the inline string capacity"))) {
+        \\    Err(A(text)) => text
+        \\    Ok({}) => "unexpected success"
+        \\}
+        ,
+        .expected = .{ .inspect_str = "\"an overlapping payload longer than the inline string capacity\"" },
+    },
+    .{
+        .name = "issue 11235: composed return boundaries preserve wrapped error payloads",
+        .source_kind = .module,
+        .source =
+        \\f : Try({}, [..a]) -> Try({}, [A, ..a])
+        \\f = |x| {
+        \\    x?
+        \\    Err(A)
+        \\}
+        \\wrap = |x| {
+        \\    _ = f(x) ? Wrapped
+        \\    Ok({})
+        \\}
+        \\main = wrap(Err(B("propagated")))
+        ,
+        .expected = .{ .inspect_str = "Err(Wrapped(B(\"propagated\")))" },
+    },
+    .{
+        .name = "issue 11301: stored record callables forward evidence through nested scopes independently",
+        .source_kind = .module,
+        .source =
+        \\stored = { invoke: outer }
+        \\outer = |hooks| {
+        \\    _ = hooks.get
+        \\    forward = |next| middle(next)
+        \\    forward(hooks)
+        \\}
+        \\middle = |hooks| {
+        \\    get = hooks.get
+        \\    _ = get("name")
+        \\    inner(hooks)
+        \\}
+        \\inner = |hooks| {
+        \\    run = hooks.run
+        \\    output = run()?
+        \\    _ = output.trim()
+        \\    Ok({})
+        \\}
+        \\main = (
+        \\    (stored.invoke)({ run: || Err(CommandNotFound), get: |_name| "x" }),
+        \\    (stored.invoke)({ run: || Ok("  found  "), get: |_name| "y" }),
+        \\)
+        ,
+        .expected = .{ .inspect_str = "(Err(CommandNotFound), Ok({}))" },
+    },
+    .{
+        .name = "issue 11217: stored closures retain enclosing callable alias contexts",
+        .source_kind = .module,
+        .source =
+        \\make = |captured| {
+        \\    pair = |x| (captured, x)
+        \\    alias = pair
+        \\    |{}| (alias(1), alias("a"))
+        \\}
+        \\first = make("capture")
+        \\second = make(42)
+        \\main = (first({}), second({}))
+        ,
+        .expected = .{ .inspect_str = "(((\"capture\", 1.0), (\"capture\", \"a\")), ((42.0, 1.0), (42.0, \"a\")))" },
+    },
+    .{
+        .name = "issue 11217: callable alias specializations preserve values and dispatch",
+        .source_kind = .module,
+        .source =
+        \\id = |x| x
+        \\equal = |x, y| x == y
+        \\main = {
+        \\    first = id
+        \\    alias = first
+        \\    eq = equal
+        \\    (alias(1), alias("a"), eq(1, 2), eq("a", "a"))
+        \\}
+        ,
+        .expected = .{ .inspect_str = "(1.0, \"a\", False, True)" },
+    },
+    .{
+        .name = "issue 11217: callable aliases preserve shared captured values",
+        .source_kind = .module,
+        .source =
+        \\make = |captured| {
+        \\    pair = |x| (captured, x)
+        \\    alias = pair
+        \\    (alias(1), alias("a"))
+        \\}
+        \\main = (make("capture"), make(42))
+        ,
+        .expected = .{ .inspect_str = "(((\"capture\", 1.0), (\"capture\", \"a\")), ((42.0, 1.0), (42.0, \"a\")))" },
+    },
+    .{
+        .name = "issue 10703: loop var aliasing an argument leaves argument reads loop-invariant",
+        .source = issue10703LineLayoutSource,
+        .expected = .{ .allocations_at_most = .{ .output = "820", .max_allocations = 32, .optimized = true } },
+    },
+    .{
+        .name = "issue 10703: two loop vars seeded from one variable keep its reads intact",
+        .source = issue10703DualAliasSource,
+        .expected = .{ .allocations_at_most = .{ .output = "26", .max_allocations = 4, .optimized = true } },
+    },
+    .{
+        .name = "issue 9658: scanner loop with merging mutable Str alias groups certifies and evaluates",
+        .source_kind = .module,
+        .source = issue9658ScannerSource,
+        .expected = .{ .inspect_str = "\"kkkkkkkk\"" },
+    },
+    .{
+        .name = "issue 806: large aggregate evaluates across interpreter dev wasm and llvm",
+        .source_kind = .module,
+        .source = issue806LargeAggregateSource,
+        .expected = .{ .inspect_str = "4096" },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/9796
+        // Two passing top-level expects that both instantiate a parser result
+        // alias through a type module must finalize independently without
+        // corrupting the checked data consumed by the next expect root.
+        .name = "issue 9796: multiple parser expects with forward alias both finalize",
+        .source_kind = .module,
+        .source =
+        \\Parser(input, a) :: { fun : input -> Parser.ParseResult(input, a) }.{
+        \\    ParseResult(input, a) : Try({ val : a, input : input }, [ParsingFailure(Str)])
+        \\
+        \\    build_primitive_parser : (input -> ParseResult(input, a)) -> Parser(input, a)
+        \\    build_primitive_parser = |fun| { { fun } }
+        \\
+        \\    parse_partial : Parser(input, a), input -> ParseResult(input, a)
+        \\    parse_partial = |{ fun }, input| {
+        \\        fun(input)
+        \\    }
+        \\
+        \\    chomp_until : a -> Parser(List(a), List(a)) where [a.is_eq : a, a -> Bool]
+        \\    chomp_until = |char| {
+        \\        build_primitive_parser(
+        \\            |input| {
+        \\                match input.find_first_index(|x| { x == char }) {
+        \\                    Ok(index) => {
+        \\                        val = input.sublist({ start: 0, len: index })
+        \\                        Ok({ val, input: input.drop_first(index) })
+        \\                    }
+        \\                    Err(_) => Err(ParsingFailure("character not found"))
+        \\                }
+        \\            }
+        \\        )
+        \\    }
+        \\}
+        \\
+        \\expect {
+        \\    input = "# H\nR".to_utf8()
+        \\    result = Parser.parse_partial(Parser.chomp_until('\n'), input)
+        \\    result == Ok({ val: ['#', ' ', 'H'], input: ['\n', 'R'] })
+        \\}
+        \\
+        \\expect {
+        \\    match Parser.parse_partial(Parser.chomp_until('\n'), []) {
+        \\        Ok(_) => Bool.False
+        \\        Err(ParsingFailure(_)) => Bool.True
+        \\    }
+        \\}
+        \\
+        \\main : U8
+        \\main = 0
+        ,
+        .expected = .{ .inspect_str = "0" },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/9686
+        // A type alias (`Score : U64`) defined in an imported type module is used
+        // as a List element type. The comparator passed to List.sort_with desugars
+        // `a < b`/`a > b` to is_lt/is_gt static dispatches on `Score`. Across the
+        // module boundary the alias must be unwrapped to its U64 backing for static
+        // dispatch; otherwise the comparator fails to resolve / selects the wrong
+        // target and the list is not sorted (the issue's wrong `[70, 75, 40]`).
+        // Inline (single module) the alias collapses to U64 and sorts correctly.
+        // Correct top-3 descending of the input is [100, 90, 75].
+        .name = "issue 9686: imported type-module alias element sorts correctly",
+        .source_kind = .module,
+        .imports = &.{.{
+            .name = "HighScores",
+            .source =
+            \\HighScores :: {}.{
+            \\    Score : U64
+            \\
+            \\    personal_top_three : List(Score) -> List(Score)
+            \\    personal_top_three = |scores| {
+            \\        scores->sort_desc().take_first(3)
+            \\    }
+            \\}
+            \\
+            \\sort_desc = |list| {
+            \\    list.sort_with(
+            \\        |a, b| if a < b {
+            \\            After
+            \\        } else if a > b {
+            \\            Before
+            \\        } else {
+            \\            Same
+            \\        },
+            \\    )
+            \\}
+            ,
+        }},
+        .source =
+        \\import HighScores
+        \\
+        \\main = HighScores.personal_top_three([10, 30, 90, 30, 100, 20, 10, 0, 30, 40, 40, 75, 70])
+        ,
+        .expected = .{ .inspect_str = "[100, 90, 75]" },
+    },
+    .{
+        .name = "issue 8949: wasm evaluates to_str after boxed closure allocation",
+        .source_kind = .module,
+        .source =
+        \\State : { count : I64 }
+        \\
+        \\main = {
+        \\    initialState : State
+        \\    initialState = { count: 42 }
+        \\    _updater = Box.box(|state| { count: state.count + 1 })
+        \\    countStr = initialState.count.to_str()
+        \\
+        \\    "Count: ${countStr}"
+        \\}
+        ,
+        .expected = .{ .inspect_str = "\"Count: 42\"" },
+    },
+    .{
+        .name = "issue 9389: non-existent list method reports a problem instead of crashing",
+        .source_kind = .module,
+        .source =
+        \\Min :: [].{
+        \\    foo : List(a) -> List(a)
+        \\    foo = |list| list.reverse()
+        \\}
+        \\
+        \\main = Min.foo([0])
+        ,
+        .expected = .{ .problem = {} },
+    },
+    .{
+        .name = "issue 9390: var initialized from polymorphic list.len reads back as U64",
+        .source_kind = .module,
+        .source =
+        \\foo : List(a) -> U64
+        \\foo = |list| {
+        \\    var $idx = list.len()
+        \\    $idx
+        \\}
+        \\
+        \\main = foo([0])
+        ,
+        .expected = .{ .inspect_str = "1" },
+    },
+    .{
+        .name = "issue 9390: var initialized from polymorphic list.len controls one loop iteration",
+        .source_kind = .module,
+        .source =
+        \\foo : List(a) -> U64
+        \\foo = |list| {
+        \\    var $idx = list.len()
+        \\    var $iterations = 0
+        \\    while $idx > 0 {
+        \\        $idx = $idx - 1
+        \\        $iterations = $iterations + 1
+        \\    }
+        \\    $iterations
+        \\}
+        \\
+        \\main = foo([0])
+        ,
+        .expected = .{ .inspect_str = "1" },
+    },
+    .{
+        .name = "issue 9391: fractional method receiver specializes to F64 argument",
+        .source_kind = .module,
+        .source =
+        \\f : U64 -> F64
+        \\f = |_n| 0.001
+        \\
+        \\main = 0.001.is_lte(f(3))
+        ,
+        .expected = .{ .inspect_str = "True" },
+    },
+    .{
+        .name = "issue 9393: greater-than-or-equal on numeric list element terminates",
+        .source_kind = .module,
+        .source =
+        \\uppercase_help : List(I64) -> List(I64)
+        \\uppercase_help = |bytes| {
+        \\    first = bytes.get(0).ok_or(0)
+        \\    if is_lowercase(first) bytes else bytes
+        \\}
+        \\
+        \\is_lowercase = |c| c >= 97
+        \\
+        \\main = [100]->uppercase_help
+        ,
+        .expected = .{ .inspect_str = "[100]" },
+    },
+    .{
+        .name = "issue 9395: List.all static dispatch on list literal terminates",
+        .source_kind = .module,
+        .source =
+        \\bar : U8 -> Bool
+        \\bar = |_c| Bool.True
+        \\
+        \\main = [0].all(bar)
+        ,
+        .expected = .{ .inspect_str = "True" },
+    },
+    .{
+        .name = "issue 9395: List.any static dispatch on list literal terminates",
+        .source_kind = .module,
+        .source =
+        \\bar : U8 -> Bool
+        \\bar = |_c| Bool.True
+        \\
+        \\main = [0].any(bar)
+        ,
+        .expected = .{ .inspect_str = "True" },
+    },
+    .{
+        .name = "issue 9396: undefined identifier in type-module method body reports a problem",
+        .source_kind = .module,
+        .source =
+        \\Min :: [].{
+        \\    foo : U8 -> Bool
+        \\    foo = |_bar| U8.is_zero(baz)
+        \\}
+        \\
+        \\main = Min.foo(0)
+        ,
+        .expected = .{ .problem = {} },
+    },
+    .{
+        // Calling `Foo.inspect(Baz)` leaves the nominal type parameter `a`
+        // unconstrained: `Baz` carries no `a`, so the `where [a.inspect : a -> Str]`
+        // clause has nothing to bind `a` to. Earlier this panicked in mono
+        // specialization ("constrained variable matched multiple checked method
+        // owners"). The body never invokes the constraint, so the owner is
+        // irrelevant and the call simply evaluates to "ok".
+        .name = "issue 9502: static dispatch on no-payload variant of polymorphic nominal evaluates",
+        .source_kind = .module,
+        .source =
+        \\Foo(a) := [Bar(a), Baz].{
+        \\    inspect : Foo(a) -> Str where [a.inspect : a -> Str]
+        \\    inspect = |_foo| "ok"
+        \\}
+        \\
+        \\main = Foo.inspect(Baz)
+        ,
+        .expected = .{ .inspect_str = "\"ok\"" },
+    },
+    .{
+        // A nominal record whose declared field order ({ id, balance }) differs
+        // from alphabetical order ({ balance, id }). It is constructed in the
+        // imported module and its fields read in the main module, so an
+        // inconsistent cross-module layout would read the wrong bytes.
+        .name = "nominal record imported across modules reads correct fields",
+        .source_kind = .module,
+        .imports = &.{.{
+            .name = "Acct",
+            .source =
+            \\Acct := { id : U8, balance : U32 }.{
+            \\    sample : Acct
+            \\    sample = { id : 7, balance : 99 }
+            \\}
+            \\
+            ,
+        }},
+        .source =
+        \\import Acct exposing [Acct]
+        \\
+        \\describe : Acct -> U32
+        \\describe = |{ id, balance }| id.to_u32() * 1000 + balance
+        \\
+        \\main = describe(Acct.sample)
+        ,
+        .expected = .{ .inspect_str = "7099" },
+    },
+    .{
+        // A nominal record with unnamed padding fields (mirroring a C struct's
+        // explicit padding). Construction provides only the named fields and the
+        // padding bytes stay reserved; reading the named fields back must use the
+        // offsets that account for the padding (a@0, b@4), not packed offsets.
+        .name = "nominal record with unnamed padding reads correct fields",
+        .source_kind = .module,
+        .source =
+        \\Padded := { a : U8, _ : U8, _ : U8, _ : U8, b : U32 }
+        \\
+        \\sample : Padded
+        \\sample = { a : 7, b : 99 }
+        \\
+        \\describe : Padded -> U32
+        \\describe = |{ a, b }| a.to_u32() * 1000 + b
+        \\
+        \\main = describe(sample)
+        ,
+        .expected = .{ .inspect_str = "7099" },
+    },
+    .{
+        // An unnamed padding field whose type is refcounted (`Str`). Its bytes
+        // are uninitialized garbage and must never be refcounted, compared, or
+        // inspected—only its size is reserved. If the padding spacer were
+        // treated as a live Str, dropping the value would decref garbage and
+        // crash, so this exercises the refcount/equality padding skip on every
+        // backend.
+        .name = "nominal record with refcounted-typed padding is never refcounted",
+        .source_kind = .module,
+        .source =
+        \\Padded := { a : U8, _ : Str, b : U32 }
+        \\
+        \\sample : Padded
+        \\sample = { a : 7, b : 99 }
+        \\
+        \\describe : Padded -> U32
+        \\describe = |{ a, b }| a.to_u32() * 1000 + b
+        \\
+        \\main = describe(sample)
+        ,
+        .expected = .{ .inspect_str = "7099" },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/9725
+        // An anonymous record must work as a Dict key. Dict.insert requires
+        // `k.to_hash`, which the checker derives structurally for records (as it
+        // already does for `is_eq`). Inserting under a record key then reading it
+        // back with an equal record key must round-trip: the structural hash makes
+        // both keys land in the same bucket and structural is_eq confirms the match.
+        .name = "issue 9725: record as a Dict key round-trips",
+        .source_kind = .module,
+        .source =
+        \\main = Dict.empty().insert({ a: 1, b: 2 }, 99).get({ a: 1, b: 2 })
+        ,
+        .expected = .{ .inspect_str = "Ok(99.0)" },
+    },
+    .{
+        // A small (SSO) string key exercises the wasm backend's str hashing path
+        // (hasher_write_str), which must decode small-string inline storage the
+        // same way every other backend does, so cross-backend hashes stay equal
+        // and the key round-trips on every backend (incl. wasm).
+        .name = "issue 9725: small-string Dict key round-trips",
+        .source_kind = .module,
+        .source =
+        \\main = Dict.empty().insert("ab", 99).get("ab")
+        ,
+        .expected = .{ .inspect_str = "Ok(99.0)" },
+    },
+    .{
+        // The structural `to_hash` derivation generalizes beyond records: a tuple
+        // key must work the same way, hashing each element in order.
+        .name = "issue 9725: tuple as a Dict key round-trips",
+        .source_kind = .module,
+        .source =
+        \\main = Dict.empty().insert((1, 2), 99).get((1, 2))
+        ,
+        .expected = .{ .inspect_str = "Ok(99.0)" },
+    },
+    .{
+        // A record key whose field is itself a structural type (a tuple). The
+        // derived `to_hash` must recurse into the nested tuple to hash all of it.
+        .name = "issue 9725: record with nested tuple as a Dict key round-trips",
+        .source_kind = .module,
+        .source =
+        \\main = Dict.empty().insert({ pair: (1, 2), tag: 3 }, 99).get({ pair: (1, 2), tag: 3 })
+        ,
+        .expected = .{ .inspect_str = "Ok(99.0)" },
+    },
+    .{
+        // The structural `to_hash` derivation also covers tag unions: the
+        // discriminant is hashed first, then the active variant's payloads. Two
+        // tags with payloads exercise both the discriminant and the payload paths.
+        .name = "issue 9725: tag-union value as a Dict key round-trips",
+        .source_kind = .module,
+        .source =
+        \\Key : [A(U64), B(U64)]
+        \\
+        \\main = {
+        \\    key_a : Key
+        \\    key_a = A(1)
+        \\    key_b : Key
+        \\    key_b = B(1)
+        \\    d = Dict.empty().insert(key_a, 11).insert(key_b, 22)
+        \\    d.get(B(1))
+        \\}
+        ,
+        .expected = .{ .inspect_str = "Ok(22.0)" },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/10049
+        // Structural derivation must call a named component's exact equality
+        // and hash methods instead of inspecting its backing representation.
+        .name = "issue 10049: structural containers honor component equality and hash methods",
+        .source_kind = .module,
+        .source =
+        \\main = {
+        \\    d1 = Dict.from_list([("Bob", 3.1), ("John", 4.2)])
+        \\    d2 = Dict.from_list([("John", 4.2), ("Bob", 3.1)])
+        \\    records_equal = { owes: d1 } == { owes: d2 }
+        \\    tuples_equal = (d1, 0) == (d2, 0)
+        \\    tags_equal = Owes(d1) == Owes(d2)
+        \\    lists_equal = [d1] == [d2]
+        \\    sets_equal = { items: Set.from_list([1, 2]) } == { items: Set.from_list([2, 1]) }
+        \\    hash_round_trip = Dict.empty().insert({ owes: d1 }, "found").get({ owes: d2 }) == Ok("found")
+        \\    tuple_hash_round_trip = Dict.empty().insert((d1, 0), "found").get((d2, 0)) == Ok("found")
+        \\    tag_hash_round_trip = Dict.empty().insert(Owes(d1), "found").get(Owes(d2)) == Ok("found")
+        \\    set_hash_round_trip = Dict.empty().insert(Set.from_list([1, 2]), "found").get(Set.from_list([2, 1])) == Ok("found")
+        \\
+        \\    records_equal and tuples_equal and tags_equal and lists_equal and sets_equal and hash_round_trip and tuple_hash_round_trip and tag_hash_round_trip and set_hash_round_trip
+        \\}
+        ,
+        .expected = .{ .inspect_str = "True" },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/9783
+        // The exact mathematical result is 16129, which does not fit in I8.
+        .name = "issue 9783: signed times crashes on overflow",
+        .source = "I8.times(I8.highest, I8.highest)",
+        .expected = .{ .crash = {} },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/9812
+        // The exact mathematical result is 128, which does not fit in I8.
+        .name = "issue 9812: signed negate crashes on lowest value",
+        .source = "I8.negate(I8.lowest)",
+        .expected = .{ .crash = {} },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/9813
+        // The exact mathematical result is 128, which does not fit in I8.
+        .name = "issue 9813: signed abs crashes on lowest value",
+        .source = "I8.abs(I8.lowest)",
+        .expected = .{ .crash = {} },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/9814
+        // The exact mathematical result is 128, which does not fit in I8.
+        .name = "issue 9814: signed div_by crashes on lowest divided by negative one",
+        .source = "I8.div_by(I8.lowest, -1)",
+        .expected = .{ .crash = {} },
+    },
+    .{
+        // The same signed division edge has a defined remainder of zero.
+        .name = "issue 9814: signed rem and mod by negative one return zero",
+        .source = "(I8.rem_by(I8.lowest, -1), I8.mod_by(I8.lowest, -1))",
+        .expected = .{ .inspect_str = "(0, 0)" },
+    },
+    .{
+        // I128 modulo carries the sign of the divisor: a negative dividend with a
+        // positive divisor yields a positive result, never the truncated
+        // remainder (-1). Exercises the dev and wasm backends' i128-width paths.
+        .name = "i128 mod_by: negative dividend, positive divisor",
+        .source = "I128.mod_by(-7, 3)",
+        .expected = .{ .inspect_str = "2" },
+    },
+    .{
+        // I128 modulo with a positive dividend and negative divisor yields a
+        // negative result (sign of the divisor).
+        .name = "i128 mod_by: positive dividend, negative divisor",
+        .source = "I128.mod_by(7, -3)",
+        .expected = .{ .inspect_str = "-2" },
+    },
+    .{
+        // A dividend larger in magnitude than 64 bits forces the true i128 path.
+        // -(2^64 + 1) mod 3 == 1 (truncated remainder -2, adjusted by +3).
+        .name = "i128 mod_by: magnitude exceeds 64 bits",
+        .source = "I128.mod_by(-18446744073709551617, 3)",
+        .expected = .{ .inspect_str = "1" },
+    },
+    .{
+        // Truncated remainder keeps the sign of the dividend on every backend,
+        // in contrast to modulo which carries the sign of the divisor.
+        .name = "i128 rem_by: negative dividend keeps dividend sign",
+        .source = "I128.rem_by(-7, 3)",
+        .expected = .{ .inspect_str = "-1" },
+    },
+    .{
+        .name = "i128 rem_by: magnitude exceeds 64 bits",
+        .source = "I128.rem_by(-18446744073709551617, 3)",
+        .expected = .{ .inspect_str = "-2" },
+    },
+    .{
+        // Dec truncated remainder keeps the sign of the dividend. Dec has no
+        // mod_by in the language surface, so Dec modulo cannot be exercised
+        // end-to-end; this pins the reachable Dec rem path.
+        .name = "dec rem_by: negative dividend keeps dividend sign",
+        .source = "Dec.rem_by(-7.5, 2.0)",
+        .expected = .{ .inspect_str = "-1.5" },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/10084
+        // `item` is bound only through `outer.get`'s return type. The call edge
+        // must carry both static-dispatch evidence entries into specialization.
+        .name = "issue 10084: constraint-only receiver evidence reaches nested dispatch",
+        .source_kind = .module,
+        .source =
+        \\Inner := [Inner(U64)].{
+        \\    get : Inner -> U64
+        \\    get = |Inner.Inner(value)| value
+        \\}
+        \\
+        \\Outer := [Outer(Inner)].{
+        \\    get : Outer -> Inner
+        \\    get = |Outer.Outer(value)| value
+        \\}
+        \\
+        \\nested_get : outer -> result where [outer.get : outer -> item, item.get : item -> result]
+        \\nested_get = |outer| outer.get().get()
+        \\
+        \\main = nested_get(Outer.Outer(Inner.Inner(42)))
+        ,
+        .expected = .{ .inspect_str = "42" },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/10210
+        .name = "issue 10210: Dec division by zero crashes on every executor",
+        .source =
+        \\{
+        \\    f = |a, b| a / b
+        \\    f(1.0.Dec, 0.0.Dec)
+        \\}
+        ,
+        .expected = .{ .crash = {} },
+    },
+    .{
+        .name = "issue 10210: Dec truncating division by zero crashes on every executor",
+        .source = "Dec.div_trunc_by(1.0, 0.0)",
+        .expected = .{ .crash = {} },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/10209
+        // A concrete-number lambda remains callable directly from its record field.
+        .name = "issue 10209: concrete-number function stored in record field remains callable",
+        .source =
+        \\{
+        \\    r = { op: |x| x * 11.I64 }
+        \\    (r.op)(4.I64)
+        \\}
+        ,
+        .expected = .{ .inspect_str = "44" },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/10170
+        .name = "issue 10170: List fold can concatenate iterator accumulators",
+        .source =
+        \\{
+        \\    _ = [[].iter()].fold([].iter(), |a, b| a.concat(b))
+        \\    {}
+        \\}
+        ,
+        .expected = .{ .inspect_str = "{}" },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/10067
+        // A stored const keeps the exact generated iterator witness. Using the
+        // binding must consume that witness without merging it into the public
+        // Iter interface.
+        .name = "issue 10067: stored iterator witness survives lookup",
+        .source_kind = .module,
+        .source =
+        \\xs = [1.I64].iter()
+        \\
+        \\main : List(I64)
+        \\main = xs.collect()
+        ,
+        .expected = .{ .inspect_str = "[1]" },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/10067
+        .name = "issue 10067: stored iterator witness survives record field access",
+        .source_kind = .module,
+        .source =
+        \\holder : { it : Iter(I64) }
+        \\holder = { it: [1.I64].iter() }
+        \\
+        \\main : List(I64)
+        \\main = holder.it.collect()
+        ,
+        .expected = .{ .inspect_str = "[1]" },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/10067
+        .name = "issue 10067: stored iterator witness survives tuple item access",
+        .source_kind = .module,
+        .source =
+        \\pair : (Iter(I64), I64)
+        \\pair = ([1.I64].iter(), 0.I64)
+        \\
+        \\main : List(I64)
+        \\main = pair.0.collect()
+        ,
+        .expected = .{ .inspect_str = "[1]" },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/10301
+        .name = "issue 10301: for over an effect-produced runtime list folds correctly",
+        .source_kind = .module,
+        .source =
+        \\produce : U64 -> List(U64)
+        \\produce = |n| {
+        \\    dbg "produce"
+        \\    [n, 2, 3]
+        \\}
+        \\
+        \\main : U64
+        \\main = {
+        \\    var $sum = 0
+        \\    for byte in produce(1) {
+        \\        $sum = $sum * 31 + byte
+        \\    }
+        \\    $sum
+        \\}
+        ,
+        .expected = .{ .inspect_str = "1026" },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/10317
+        .name = "issue 10317: loop-carried reassignment under a branch keeps zero args",
+        .source_kind = .module,
+        .source =
+        \\main : I64
+        \\main = {
+        \\    var $x = 0
+        \\    var $y = 0
+        \\    for flag in [Bool.False] {
+        \\        $y = if flag {
+        \\            $x = 1
+        \\            0
+        \\        } else {
+        \\            0
+        \\        }
+        \\    }
+        \\    $x + $y
+        \\}
+        ,
+        .expected = .{ .inspect_str = "0" },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/10300
+        .name = "issue 10300: integer wrapping arithmetic is expressible",
+        .source = "(U8.plus_wrap(U8.highest, 1), U8.minus_wrap(0, 1), U8.times_wrap(128, 2))",
+        .expected = .{ .inspect_str = "(0, 255, 0)" },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/10321
+        .name = "issue 10321: generalized from_quote literal supports custom and builtin specializations",
+        .source_kind = .module,
+        .source =
+        \\Bar := [Text(Str), Empty].{
+        \\    from_quote : Str -> Try(Bar, [BadQuotedBytes(Str)])
+        \\    from_quote = |str| Ok(Text(str))
+        \\}
+        \\
+        \\bar_identity : Bar -> Bar
+        \\bar_identity = |bar| bar
+        \\
+        \\str_identity : Str -> Str
+        \\str_identity = |str| str
+        \\
+        \\go = |f| f("hello")
+        \\
+        \\main = (go(bar_identity), go(str_identity))
+        ,
+        .expected = .{ .inspect_str = "(Text(\"hello\"), \"hello\")" },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/10321
+        .name = "issue 10321: from_quote survives a function stored in a record",
+        .source_kind = .module,
+        .source =
+        \\Bar := [Text(Str), Empty].{
+        \\    from_quote : Str -> Try(Bar, [BadQuotedBytes(Str)])
+        \\    from_quote = |str| Ok(Text(str))
+        \\}
+        \\
+        \\identity : Bar -> Bar
+        \\identity = |bar| bar
+        \\
+        \\hooks = { mk: identity }
+        \\
+        \\use_hooks = |h| {
+        \\    mk = h.mk
+        \\    mk("hello")
+        \\}
+        \\
+        \\main = use_hooks(hooks)
+        ,
+        .expected = .{ .inspect_str = "Text(\"hello\")" },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/9856
+        .name = "issue 9856: crash accepts multiline strings on every backend",
+        .source =
+        \\{
+        \\    crash
+        \\        \\This does not
+        \\        \\work.
+        \\}
+        ,
+        .expected = .{ .crash = {} },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/9856
+        .name = "issue 9856: crash evaluates interpolation on every backend",
+        .source =
+        \\{
+        \\    n : I64
+        \\    n = 42
+        \\    crash "runtime-built crash message long enough for heap storage: ${n.to_str()}"
+        \\}
+        ,
+        .expected = .{ .crash = {} },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/10763
+        .name = "issue 10763: separate calls instantiate a partial scheme independently",
+        .source_kind = .module,
+        .source =
+        \\mk : {} -> ((() -> val), val -> Try({}, [NotEq, ..])) where [val.is_eq : val, val -> Bool]
+        \\mk = |_| |thunk, expected| if thunk() == expected { Ok({}) } else { Err(NotEq) }
+        \\
+        \\main = {
+        \\    check_num = mk({})
+        \\    check_str = mk({})
+        \\    (check_num(|| 42.U64, 42), check_str(|| "a", "a"), check_str(|| "a", "b"))
+        \\}
+        ,
+        .expected = .{ .inspect_str = "(Ok({}), Ok({}), Err(NotEq))" },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/10483
+        .name = "issue 10483: top-level record destructure binder is callable from another root",
+        .source_kind = .module,
+        .source =
+        \\s : { scale : U64 -> U64, other : U64 }
+        \\s = { scale: |x| x * 2, other: 0 }
+        \\
+        \\{ scale, .. } = s
+        \\
+        \\main = scale(21)
+        ,
+        .expected = .{ .inspect_str = "42" },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/10483
+        .name = "issue 10483: top-level destructure preserves callable values nested in data",
+        .source_kind = .module,
+        .source =
+        \\s : { ops : { scale : U64 -> U64 }, other : U64 }
+        \\s = { ops: { scale: |x| x * 2 }, other: 0 }
+        \\
+        \\{ ops, .. } = s
+        \\
+        \\scale = ops.scale
+        \\main = scale(21)
+        ,
+        .expected = .{ .inspect_str = "42" },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/11060
+        .name = "issue 11060: interpolated Str.inspect of a caller-pinned error from a recursive accumulator",
+        .source_kind = .module,
+        .source =
+        \\only_bad = |made|
+        \\    made.fold([], |acc, item| match item {
+        \\        Bad(bad) => acc.append(bad)
+        \\        Good(_) => acc
+        \\    })
+        \\
+        \\make = |start, file|
+        \\    match start(file) {
+        \\        Ok(handle) => Good(handle)
+        \\        Err(e) => Bad("failed: ${Str.inspect(e)}")
+        \\    }
+        \\
+        \\batch = |start, remaining, acc|
+        \\    match remaining {
+        \\        [] => acc
+        \\        [file, .. as rest] => batch(start, rest, acc.append(make(start, file)))
+        \\    }
+        \\
+        \\main = only_bad(batch(|_file| Err(Nope2), ["x"], []))
+        ,
+        .expected = .{ .inspect_str = "[\"failed: Nope2\"]" },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/11063
+        //
+        // `Opt` brings its own `parser_for`, and the record `Opt` wraps has a
+        // field that is itself an `Opt`. Deriving the record's parser re-enters
+        // the same custom codec (custom -> derived -> custom). Both levels must
+        // decode: the outer `Opt(Inner)` from a JSON object and the inner
+        // `Opt(Bool)` from JSON `null`.
+        .name = "issue 11063: custom codec wrapping a record holding that same custom codec decodes",
+        .source_kind = .module,
+        .source =
+        \\Opt(a) := [
+        \\    None,
+        \\    Has(a),
+        \\].{
+        \\    map : Opt(a), (a -> b) -> Opt(b)
+        \\    map = |o, f|
+        \\        match o {
+        \\            Has(a) => Has(f(a))
+        \\            None => None
+        \\        }
+        \\
+        \\    with_default : Opt(a), a -> a
+        \\    with_default = |o, default|
+        \\        match o {
+        \\            Has(a) => a
+        \\            None => default
+        \\        }
+        \\
+        \\    parser_for : encoding -> (state -> Try({ value : Opt(a), rest : state }, [InvalidJson(Str), MissingRequiredField(Str), ..]))
+        \\        where [
+        \\            a.parser_for : encoding -> (state -> Try({ value : a, rest : state }, [InvalidJson(Str), MissingRequiredField(Str)])),
+        \\            encoding.parse_null : encoding, state -> Try(state, [InvalidJson(Str)]),
+        \\        ]
+        \\    parser_for = |encoding| {
+        \\        Elem : a
+        \\        parse_elem = Elem.parser_for(encoding)
+        \\
+        \\        |state|
+        \\            match encoding.parse_null(state) {
+        \\                Ok(rest) => Ok({ value: None, rest })
+        \\                Err(InvalidJson(_)) =>
+        \\                    match parse_elem(state) {
+        \\                        Ok(parsed) => Ok({ value: Has(parsed.value), rest: parsed.rest })
+        \\                        Err(InvalidJson(e)) => Err(InvalidJson(e))
+        \\                        Err(MissingRequiredField(f)) => Err(MissingRequiredField(f))
+        \\                    }
+        \\            }
+        \\    }
+        \\}
+        \\
+        \\Inner : { label : Str, flag : Opt(Bool) }
+        \\Outer : { thing : Opt(Inner) }
+        \\
+        \\describe : Inner -> Str
+        \\describe = |inner|
+        \\    Str.concat(inner.label, Opt.with_default(Opt.map(inner.flag, |b| if b "T" else "F"), "null"))
+        \\
+        \\main : Str
+        \\main = {
+        \\    decoded : Try(Outer, [InvalidJson(Str), MissingRequiredField(Str)])
+        \\    decoded = Json.parse("{\"thing\":{\"label\":\"x\",\"flag\":null}}")
+        \\    match decoded {
+        \\        Ok(m) => Opt.with_default(Opt.map(m.thing, describe), "none")
+        \\        Err(_) => "failed"
+        \\    }
+        \\}
+        ,
+        .expected = .{ .inspect_str = "\"xnull\"" },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/11094
+        //
+        // The custom codec delegates through `a.parser_for`. Its `Bool`
+        // instantiation must select Bool's scalar parser instead of opening
+        // Bool's tag-union runtime representation under the outer contract.
+        .name = "issue 11094: custom codec delegating to Bool's parser through its type parameter decodes",
+        .source_kind = .module,
+        .source =
+        \\Wrap(a) := [W(a)].{
+        \\    parser_for : encoding -> (state -> Try({ value : Wrap(a), rest : state }, [InvalidJson(Str), MissingRequiredField(Str), ..]))
+        \\        where [
+        \\            a.parser_for : encoding -> (state -> Try({ value : a, rest : state }, [InvalidJson(Str), MissingRequiredField(Str)])),
+        \\        ]
+        \\    parser_for = |encoding| {
+        \\        Elem : a
+        \\        parse_elem = Elem.parser_for(encoding)
+        \\        |state|
+        \\            match parse_elem(state) {
+        \\                Ok(parsed) => Ok({ value: W(parsed.value), rest: parsed.rest })
+        \\                Err(InvalidJson(e)) => Err(InvalidJson(e))
+        \\                Err(MissingRequiredField(f)) => Err(MissingRequiredField(f))
+        \\            }
+        \\    }
+        \\}
+        \\
+        \\main : Str
+        \\main = {
+        \\    parsed : Try({ r : Wrap(Bool) }, _)
+        \\    parsed = Json.parse("{\"r\":true}")
+        \\    match parsed {
+        \\        Ok({ r: W(value) }) => if value "yes" else "no"
+        \\        Err(_) => "failed"
+        \\    }
+        \\}
+        ,
+        .expected = .{ .inspect_str = "\"yes\"" },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/11094
+        //
+        // The encoder path has the same nominal-subject identity requirement
+        // as the parser path above. Delegating through `a.encoder_for` must use
+        // Bool's scalar encoder instead of its tag-union representation.
+        .name = "issue 11094: custom codec delegating to Bool's encoder through its type parameter encodes",
+        .source_kind = .module,
+        .source =
+        \\Wrap(a) := [W(a)].{
+        \\    encoder_for : encoding -> (Wrap(a), state -> Try(state, err))
+        \\        where [
+        \\            a.encoder_for : encoding -> (a, state -> Try(state, err)),
+        \\        ]
+        \\    encoder_for = |encoding| {
+        \\        Elem : a
+        \\        encode_elem = Elem.encoder_for(encoding)
+        \\        |W(value), state| encode_elem(value, state)
+        \\    }
+        \\}
+        \\
+        \\main : Str
+        \\main = {
+        \\    wrapped : Wrap(Bool)
+        \\    wrapped = W(Bool.True)
+        \\    Json.to_str({ r: wrapped })
+        \\}
+        ,
+        .expected = .{ .inspect_str = "\"{\\\"r\\\":true}\"" },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/11064
+        .name = "issue 11064: unannotated imported field reader runs from every match arm calling it",
+        .source_kind = .module,
+        .imports = &.{.{
+            .name = "Bar",
+            .source =
+            \\Bar := [].{
+            \\    header = |request|
+            \\        request.headers.find_first(|h| h.name == "x-foo").map_err(|_| NotFound)
+            \\}
+            ,
+        }},
+        .source =
+        \\import Bar
+        \\
+        \\main = {
+        \\    req = { uri: "/a/b", headers: [{ name: "x-foo", value: "42" }] }
+        \\    baz(req, ["a", "b"])
+        \\}
+        \\
+        \\baz = |req, parts|
+        \\    match parts {
+        \\        ["a", "b"] => foo(req)
+        \\        ["a", "b", "c"] => foo(req)
+        \\        _ => "no route"
+        \\    }
+        \\
+        \\foo = |req|
+        \\    match Bar.header(req) {
+        \\        Ok(h) => "found ${h.value}"
+        \\        Err(_) => "not found"
+        \\    }
+        ,
+        .expected = .{ .inspect_str = "\"found 42\"" },
+    },
+    .{
+        // The interpolation's result type is reachable only through `acc`'s
+        // `append` constraint callable, so `wrap`'s evidence parameter for it
+        // is a hidden dispatcher. The annotated call pins it to a user type
+        // whose own `from_interpolation` must be selected at that edge.
+        .name = "hidden interpolation dispatcher pinned to a custom from_interpolation at the call edge",
+        .source_kind = .module,
+        .source =
+        \\Wrap := [W(Str)].{
+        \\    from_interpolation : Str, Iter((Str, Str)) -> Wrap
+        \\    from_interpolation = |first, rest| W(Str.concat("<", Str.concat(Str.from_interpolation(first, rest), ">")))
+        \\
+        \\    text : Wrap -> Str
+        \\    text = |W(s)| s
+        \\}
+        \\
+        \\wrap = |acc, x| acc.append("v: ${x}")
+        \\
+        \\main = {
+        \\    ws : List(Wrap)
+        \\    ws = wrap([], "a")
+        \\    Str.join_with(List.map(ws, Wrap.text), ",")
+        \\}
+        ,
+        .expected = .{ .inspect_str = "\"<v: a>\"" },
+    },
+    .{
+        // The same hidden dispatcher left unpinned at the call edge takes its
+        // checked default (`Str`) there.
+        .name = "hidden interpolation dispatcher defaults to Str at an unpinned call edge",
+        .source_kind = .module,
+        .source =
+        \\wrap = |acc, x| acc.append("v: ${x}")
+        \\
+        \\main = Str.join_with(wrap([], "a"), ",")
+        ,
+        .expected = .{ .inspect_str = "\"v: a\"" },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/11099
+        // `Tp.send` is unannotated and dispatches a method on its parameter, so
+        // its type carries a where-clause. `Tp.effects` stores that closure in
+        // an unannotated record, and the importing module reads the field back
+        // out and calls it. Calling the closure through the imported record
+        // must run `send`, so this evaluates to "hi!".
+        .name = "issue 11099: where-clause closure read out of a record in an imported module",
+        .source_kind = .module,
+        .imports = &.{.{
+            .name = "Tp",
+            .source =
+            \\Tp := [].{
+            \\    effects = { send: send }
+            \\
+            \\    send = |x| x.concat("!")
+            \\}
+            ,
+        }},
+        .source =
+        \\import Tp
+        \\
+        \\main = {
+        \\    s = Tp.effects.send
+        \\    s("hi")
+        \\}
+        ,
+        .expected = .{ .inspect_str = "\"hi!\"" },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/11170
+        // `Str.inspect` of a SIMD vector must render through the vector's
+        // `to_inspect` method in `Builtin.roc`, the same string `dbg` prints.
+        .name = "issue 11170: Str.inspect of a SIMD vector renders its lanes",
+        .source = "U8x16.default().with_lane(1, 1)",
+        .expected = .{ .inspect_str = "U8x16(0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)" },
+    },
+    .{
+        .name = "issue 11170: U8x16 inspect preserves lane order and bounds",
+        .source = "U8x16.default().with_lane(0, 0).with_lane(15, 255)",
+        .expected = .{ .inspect_str = "U8x16(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255)" },
+    },
+    .{
+        .name = "issue 11170: I8x16 inspect preserves lane order and bounds",
+        .source = "I8x16.default().with_lane(0, -128).with_lane(15, 127)",
+        .expected = .{ .inspect_str = "I8x16(-128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 127)" },
+    },
+    .{
+        .name = "issue 11170: U16x8 inspect preserves lane order and bounds",
+        .source = "U16x8.default().with_lane(0, 0).with_lane(7, 65535)",
+        .expected = .{ .inspect_str = "U16x8(0, 0, 0, 0, 0, 0, 0, 65535)" },
+    },
+    .{
+        .name = "issue 11170: I16x8 inspect preserves lane order and bounds",
+        .source = "I16x8.default().with_lane(0, -32768).with_lane(7, 32767)",
+        .expected = .{ .inspect_str = "I16x8(-32768, 0, 0, 0, 0, 0, 0, 32767)" },
+    },
+    .{
+        .name = "issue 11170: U32x4 inspect preserves lane order and bounds",
+        .source = "U32x4.default().with_lane(0, 0).with_lane(3, 4294967295)",
+        .expected = .{ .inspect_str = "U32x4(0, 0, 0, 4294967295)" },
+    },
+    .{
+        .name = "issue 11170: I32x4 inspect preserves lane order and bounds",
+        .source = "I32x4.default().with_lane(0, -2147483648).with_lane(3, 2147483647)",
+        .expected = .{ .inspect_str = "I32x4(-2147483648, 0, 0, 2147483647)" },
+    },
+    .{
+        .name = "issue 11170: U64x2 inspect preserves lane order and bounds",
+        .source = "U64x2.default().with_lane(0, 0).with_lane(1, 18446744073709551615)",
+        .expected = .{ .inspect_str = "U64x2(0, 18446744073709551615)" },
+    },
+    .{
+        .name = "issue 11170: I64x2 inspect preserves lane order and bounds",
+        .source = "I64x2.default().with_lane(0, -9223372036854775808).with_lane(1, 9223372036854775807)",
+        .expected = .{ .inspect_str = "I64x2(-9223372036854775808, 9223372036854775807)" },
+    },
+    .{
+        .name = "issue 11170: deferred inspect of nested SIMD values",
+        .source_kind = .module,
+        .source =
+        \\render = |value| Str.inspect(value)
+        \\main = render({ vectors: [U64x2.default().with_lane(1, 9)], pair: (I64x2.splat(-1), Some(U32x4.splat(7))) }) == "{ pair: (I64x2(-1, -1), Some(U32x4(7, 7, 7, 7))), vectors: [U64x2(0, 9)] }"
+        ,
+        .expected = .{ .inspect_str = "True" },
+    },
+    .{
+        .name = "issue 11170: inspect destructures a nominal SIMD backing",
+        .source_kind = .module,
+        .source =
+        \\Vector := U64x2
+        \\main = Vector.(U64x2.default().with_lane(1, 9))
+        ,
+        .expected = .{ .inspect_str = "U64x2(0, 9)" },
+    },
+    .{
+        .name = "issue 11170: deferred inspect destructures nested nominal SIMD backings",
+        .source_kind = .module,
+        .source =
+        \\Vector := U64x2
+        \\Wrapped := Vector
+        \\render = |value| Str.inspect(value)
+        \\main = render(Wrapped.(Vector.(U64x2.default().with_lane(1, 9)))) == "U64x2(0, 9)"
+        ,
+        .expected = .{ .inspect_str = "True" },
+    },
+    .{
+        .name = "issue 11170: nominal custom inspect takes precedence over SIMD backing",
+        .source_kind = .module,
+        .source =
+        \\Vector := U64x2.{
+        \\    to_inspect = |_vector| "custom vector"
+        \\}
+        \\main = Vector.(U64x2.default())
+        ,
+        .expected = .{ .inspect_str = "custom vector" },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/11189
+        .name = "issue 11189: namespaced comparison helper called from a nested fold_with_index",
+        .source_kind = .module,
+        .source =
+        \\Point : { x : F64, y : F64 }
+        \\
+        \\Internals := {}.{
+        \\    proper = |a, b, c, d| {
+        \\        if a.x == b.x and c.y == d.y {
+        \\            c.x > a.x.min(b.x) and c.x < a.x.max(b.x) and a.y > c.y.min(d.y) and a.y < c.y.max(d.y)
+        \\        } else if a.y == b.y and c.x == d.x {
+        \\            a.x > c.x.min(d.x) and a.x < c.x.max(d.x) and c.y > a.y.min(b.y) and c.y < a.y.max(b.y)
+        \\        } else if a.x == b.x and c.x == d.x and a.x == c.x {
+        \\            a.y.min(b.y) < c.y.max(d.y) and a.y.max(b.y) > c.y.min(d.y)
+        \\        } else {
+        \\            False
+        \\        }
+        \\    }
+        \\
+        \\    simple = |points| points.fold_with_index(
+        \\        True,
+        \\        |simple, a, i| match points.get(i + 1) {
+        \\            Err(_) => simple
+        \\            Ok(b) => points.fold_with_index(
+        \\                simple,
+        \\                |clear, c, j| if j <= i + 1 {
+        \\                    clear
+        \\                } else {
+        \\                    match points.get(j + 1) {
+        \\                        Ok(d) => clear and !Internals.proper(a, b, c, d)
+        \\                        Err(_) => clear
+        \\                    }
+        \\                },
+        \\            )
+        \\        },
+        \\    )
+        \\}
+        \\
+        \\valid : List(Point) -> Bool
+        \\valid = |points| Internals.simple(points)
+        \\
+        \\main = valid([])
+        ,
+        .expected = .{ .inspect_str = "True" },
+    },
+    .{
+        .name = "issue 11189: comparison branches execute at independent F64 and F32 specializations",
+        .source_kind = .module,
+        .source =
+        \\Point : { x : F64, y : F64 }
+        \\
+        \\Internals := {}.{
+        \\    proper = |a, b, c, d| {
+        \\        if a.x == b.x and c.y == d.y {
+        \\            c.x > a.x.min(b.x) and c.x < a.x.max(b.x) and a.y > c.y.min(d.y) and a.y < c.y.max(d.y)
+        \\        } else if a.y == b.y and c.x == d.x {
+        \\            a.x > c.x.min(d.x) and a.x < c.x.max(d.x) and c.y > a.y.min(b.y) and c.y < a.y.max(b.y)
+        \\        } else if a.x == b.x and c.x == d.x and a.x == c.x {
+        \\            a.y.min(b.y) < c.y.max(d.y) and a.y.max(b.y) > c.y.min(d.y)
+        \\        } else {
+        \\            False
+        \\        }
+        \\    }
+        \\
+        \\    simple = |points| points.fold_with_index(
+        \\        True,
+        \\        |simple, a, i| match points.get(i + 1) {
+        \\            Err(_) => simple
+        \\            Ok(b) => points.fold_with_index(
+        \\                simple,
+        \\                |clear, c, j| if j <= i + 1 {
+        \\                    clear
+        \\                } else {
+        \\                    match points.get(j + 1) {
+        \\                        Ok(d) => clear and !Internals.proper(a, b, c, d)
+        \\                        Err(_) => clear
+        \\                    }
+        \\                },
+        \\            )
+        \\        },
+        \\    )
+        \\}
+        \\
+        \\valid : List(Point) -> Bool
+        \\valid = |points| Internals.simple(points)
+        \\
+        \\valid32 : List({ x : F32, y : F32 }) -> Bool
+        \\valid32 = |points| Internals.simple(points)
+        \\
+        \\main = (
+        \\    valid([]),
+        \\    valid([{ x: 0, y: 0 }, { x: 0, y: 3 }, { x: 0, y: 1 }, { x: 0, y: 2 }]),
+        \\    valid32([{ x: 0, y: 0 }, { x: 0, y: 3 }, { x: 0, y: 1 }, { x: 0, y: 2 }]),
+        \\    valid([{ x: 0, y: 0 }, { x: 0, y: 2 }, { x: -1, y: 1 }, { x: 1, y: 1 }]),
+        \\    valid([{ x: 0, y: 0 }, { x: 2, y: 0 }, { x: 1, y: -1 }, { x: 1, y: 1 }]),
+        \\)
+        ,
+        .expected = .{ .inspect_str = "(True, False, False, True, True)" },
+    },
+    .{
+        .name = "issue 11189: hidden comparison receivers cross three nested folds",
+        .source_kind = .module,
+        .source =
+        \\Helpers := {}.{
+        \\    ordered = |a, b| a.min(b) <= a.max(b)
+        \\    run = |xs| xs.fold(True, |ok, a|
+        \\        xs.fold(ok, |yes, b|
+        \\            xs.fold(yes, |still, _| still and Helpers.ordered(a, b))))
+        \\}
+        \\
+        \\main = {
+        \\    xs : List(F64)
+        \\    xs = [2, 1]
+        \\    ys : List(I64)
+        \\    ys = [3, 1]
+        \\    (Helpers.run(xs), Helpers.run(ys))
+        \\}
+        ,
+        .expected = .{ .inspect_str = "(True, True)" },
+    },
+    .{
+        .name = "issue 11189: stored functions restore hidden comparison bindings independently",
+        .source_kind = .module,
+        .source =
+        \\Factory := {}.{
+        \\    ordered = |a, b| a.min(b) < a.max(b)
+        \\    make = |a, b| |{}| Factory.ordered(a, b)
+        \\}
+        \\
+        \\p : {} -> Bool
+        \\p = {
+        \\    a : F64
+        \\    a = 1
+        \\    Factory.make(a, 2)
+        \\}
+        \\
+        \\q : {} -> Bool
+        \\q = {
+        \\    a : I64
+        \\    a = 3
+        \\    Factory.make(a, 3)
+        \\}
+        \\
+        \\main = (p({}), q({}))
+        ,
+        .expected = .{ .inspect_str = "(True, False)" },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/11243
+        // A type-module function whose Bool result comes from a method
+        // dispatch on an unresolved receiver (`boxes.any(...)`) is called
+        // directly as an operand of `==` against a bare tag literal. The
+        // comparison must take place at the call's completed result type,
+        // the nominal Bool the callee produces, rather than at the anonymous
+        // tag union the call site observed; no boxes block the point, so
+        // the comparison is true and both points are kept.
+        .name = "issue 11243: direct call compared with a bare Bool tag compares at the callee's result type",
+        .source_kind = .module,
+        .source =
+        \\Repro :: {}.{
+        \\    point_blocked = |point, boxes| boxes.any(|box| point.x > box.min_x)
+        \\
+        \\    keep_visible = |start, finish, boxes| if Repro.point_blocked(start, boxes) == False {
+        \\        [start, finish]
+        \\    } else {
+        \\        []
+        \\    }
+        \\}
+        \\
+        \\main = Repro.keep_visible({ x: 0, y: 0 }, { x: 1, y: 1 }, []).len()
+        ,
+        .expected = .{ .inspect_str = "2" },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/11243
+        // Reduced from roc-graph-layout's Route module. `portals` is built by
+        // mapping over a list whose element type is still open (the input's
+        // `group_attachments` is empty, so `get` fixes nothing about its
+        // elements), and the same `is_empty` specialization is requested
+        // twice on it before its elements are read field by field. The
+        // second request must join the first specialization's recorded
+        // interface as a fully readable Monotype type instead of tripping
+        // over an unresolved cell. No attachments exist, so no portals are
+        // produced and the route is the empty polyline.
+        .name = "issue 11243: repeated is_empty specialization request on field-copied element records",
+        .source_kind = .module,
+        .source =
+        \\Repro :: {}.{
+        \\    route_one = |input| {
+        \\        portals = [0].keep_oks(|i| input.group_attachments.get(i)).map(
+        \\            |_rule| { point: { x: 0, y: 0 }, outward: { x: 0, y: 1 }, offset: 0.5, leaving: True },
+        \\        )
+        \\        if portals.is_empty() or portals.is_empty() {
+        \\            Polyline([])
+        \\        } else {
+        \\            Polyline(portals.map(|portal| if portal.leaving {
+        \\                portal.point
+        \\            } else {
+        \\                portal.outward
+        \\            }))
+        \\        }
+        \\    }
+        \\}
+        \\
+        \\main = Repro.route_one({ group_attachments: [] })
+        ,
+        .expected = .{ .inspect_str = "Polyline([])" },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/11243
+        // Reduced from roc-graph-layout's Route module. The fold closure's
+        // record parameter is a dismantle candidate only when its binding is
+        // owned, and this emission binds it borrowed. Releasing it at the end
+        // of the closure must then release the whole value; a residual
+        // field-by-field release is only valid for a container the dismantle
+        // plan committed for this emission. The input has no shared ends, so
+        // the fold produces the empty list.
+        .name = "issue 11243: borrowed owned-only dismantle candidate releases whole",
+        .source_kind = .module,
+        .source =
+        \\Repro :: {}.{
+        \\    problems : { graph : { edges : List(U64) }, shared_ends : List({ edges : List(U64) }) } -> List(U64)
+        \\    problems = |input| input.shared_ends.fold(
+        \\        [],
+        \\        |acc, rule| {
+        \\            same_end = rule.edges.any(|edge_index| input.graph.edges.first() == input.graph.edges.get(edge_index))
+        \\            d = if same_end {
+        \\                acc
+        \\            } else {
+        \\                []
+        \\            }
+        \\            overlaps = input.shared_ends.any(|other| other.edges == rule.edges)
+        \\            if overlaps {
+        \\                d
+        \\            } else {
+        \\                []
+        \\            }
+        \\        },
+        \\    )
+        \\}
+        \\
+        \\main = Repro.problems({ graph: { edges: [] }, shared_ends: [] })
+        ,
+        .expected = .{ .inspect_str = "[]" },
+    },
+    .{
+        // https://github.com/roc-lang/roc/issues/11275
+        // A closure captures a record whose non-updated field is refcounted
+        // and returns that record either updated (`{ ..model, query }`) or
+        // untouched on the two branches of an `if`, while the caller builds a
+        // nominal value through a method of a type declared in another module
+        // on its error path. The captured record is the captures struct's only
+        // refcounted field, so its reads are ownership-complete and both
+        // branch reads canonicalize to the one dominating read before the
+        // comparison. Dismantle analysis must classify those branch reads by
+        // that representative's plan rather than commit a take of the
+        // captures struct on a read emitted as the representative's alias;
+        // the run produces one effect.
+        .name = "issue 11275: closure returning captured record updated or unchanged solves ARC",
+        .source_kind = .module,
+        .imports = &.{.{
+            .name = "Effect",
+            .source =
+            \\Effect := [Log].{
+            \\    log : Str -> Effect
+            \\    log = |_message| Log
+            \\}
+            \\
+            ,
+        }},
+        .source =
+        \\import Effect exposing [Effect]
+        \\
+        \\Model : { query : Str, items : List(Str) }
+        \\
+        \\update : Model -> (Model, List(Effect))
+        \\update = |model|
+        \\    run(
+        \\        |body| {
+        \\            decoded : Try({ query : Str }, [Bad])
+        \\            decoded = if body == "" { Err(Bad) } else { Ok({ query: body }) }
+        \\
+        \\            match decoded {
+        \\                Ok({ query }) =>
+        \\                    if query == model.query {
+        \\                        Ok(({ ..model, query }, []))
+        \\                    } else {
+        \\                        Ok((model, []))
+        \\                    }
+        \\
+        \\                Err(Bad) => Err(Bad)
+        \\            }
+        \\        },
+        \\    )
+        \\
+        \\run : (Str -> Try((Model, List(Effect)), [Bad])) -> (Model, List(Effect))
+        \\run = |f|
+        \\    match f("") {
+        \\        Ok(updated) => updated
+        \\        Err(Bad) => ({ query: "", items: [] }, [Effect.log("")])
+        \\    }
+        \\
+        \\main = {
+        \\    (_updated, effects) = update({ query: "q", items: [] })
+        \\    List.len(effects)
+        \\}
+        ,
+        .expected = .{ .inspect_str = "1" },
+    },
+};
